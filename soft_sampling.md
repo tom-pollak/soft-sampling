@@ -84,7 +84,7 @@ Pretrained LLMs only saw discrete token embeddings during training. A "soft mix"
 
 ### 4.2 Sequential Fine-Tuning
 
-Each output is dependant on all previous outputs, which can be useful for gradient propagation, but is compute inefficient in training. Kind of like RNNs.
+Each output is dependent on all previous outputs, which can be useful for gradient propagation, but is compute inefficient in training. Kind of like RNNs.
 
 ### 4.3 Blurry embeddings / Entropy explosion
 
@@ -100,7 +100,7 @@ Possible solutions:
 
 ### 4.4 Scheduled Sampling
 
-Not obvious exactly how to incorportate the ground truth into the sampling. Discrete decoding handles this simply with "teacher-forcing", replacing the predicted embedding with the correct one.
+Not obvious exactly how to incorporate the ground truth into the sampling. Discrete decoding handles this simply with "teacher-forcing", replacing the predicted embedding with the correct one.
 
 We may need to mix the ground truth with the soft sample to stabilize training.
 
@@ -158,7 +158,6 @@ def mk_proba_dist(
 def soft_sampling_train_step(
     model,
     batch, # tokens of shape (batch_size, seq_len)
-    W_E, # model's embedding matrix
     guidance_alpha, # guidance weighting -- 1 equivalent to discrete sampling
     **kwargs, # passed to mk_proba_dist
 ):
@@ -171,6 +170,7 @@ def soft_sampling_train_step(
     past_key_values = None
     position_ids = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
 
+    W_E = model.get_input_embeddings().weight
 
     loss = torch.tensor(0., device=device)
     embeds = W_E[batch[:, :1]]  # BOS shape: (batch_size, 1, d_model)
@@ -209,8 +209,7 @@ def soft_sampling_train_step(
         embeds = torch.cat([embeds, next_embed[:, None, :]], dim=1)
         position_ids += 1
 
-    if return_tokens:
-        tokens = torch.cat(tokens, dim=1)
+    tokens = torch.cat(tokens, dim=1)
     # normalize gradient: sum batch, mean sequence length
     loss /= seq_len
     return loss, tokens
@@ -226,7 +225,7 @@ TODO: how do we want to apply `guidance_alpha`? I think we should clamp the corr
 
 ## 6. Additional Considerations
 
-### 6.1 Comparsion with BEAM
+### 6.1 Comparison with BEAM
 
 Beam Search / Self-Consistency: Another way to keep multiple possibilities is to track multiple discrete beams. However, that can explode combinatorially.
 
@@ -263,6 +262,8 @@ Alternatively put inside a new `<think>` token or something.
 - Keep multiple reasoning paths alive in a single forward pass.
 - Provide a differentiable approach to token selection, which is valuable in advanced training or RL settings.
 - Fully differentiable through sampling steps
+
+## Integration with HF Trainer
 
 ## References
 
