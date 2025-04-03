@@ -4,8 +4,12 @@ import torch
 import torch.nn.functional as F
 from datasets import load_dataset, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import GRPOTrainer, GRPOConfig
 
 # ==================== 1) GSM8K DATASET PREP ====================
+
+# <|reserved_special_token_0|>
+# <|reserved_special_token_1|>
 
 SYSTEM_PROMPT = """
 Respond in the following format:
@@ -202,8 +206,6 @@ def soft_decode_batch(
 
 # ==================== 4) CUSTOM GRPO TRAINER ====================
 
-from trl import GRPOTrainer, GRPOConfig
-
 
 class SoftGRPOTrainer(GRPOTrainer):
     """
@@ -318,22 +320,7 @@ class SoftGRPOTrainer(GRPOTrainer):
 
 
 def main():
-    # 1. Load the dataset
-    train_data = get_gsm8k_questions("train").select(
-        range(100)
-    )  # small subset for demo
-
-    # 2. Combine reward functions (we can sum them)
-    def composite_reward(prompts, completions, answer, **kwargs):
-        r1 = correctness_reward(prompts, completions, answer, **kwargs)
-        r2 = int_reward_func(completions, **kwargs)
-        r3 = strict_format_reward(completions, **kwargs)
-        r4 = soft_format_reward(completions, **kwargs)
-        # sum up
-        return [sum(x) for x in zip(r1, r2, r3, r4)]
-
-    # 3. GRPOConfig
-    from trl import GRPOConfig
+    train_data = get_gsm8k_questions("train").select(range(100))
 
     training_args = GRPOConfig(
         learning_rate=5e-6,
@@ -344,37 +331,46 @@ def main():
         lr_scheduler_type="cosine",
         optim="paged_adamw_8bit",
         logging_steps=10,
-        max_steps=200,  # shortened for demo
+        max_steps=200,  # DEBUG
         max_prompt_length=512,
         max_completion_length=256,
         per_device_train_batch_size=1,
-        num_generations=2,  # how many completions to sample per prompt
+        num_generations=2,
         output_dir="soft-grpo-checkpoints",
         report_to="none",
     )
 
-    # 4. Load model & tokenizer
-    model_name = "facebook/galactica-125m"  # or another small model
+    model_name = "facebook/galactica-125m"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    n_added = tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["<reasoning>", "</reasoning>"]}  # type: ignore
+    )
+    assert n_added == 2
+    start_reasoning_id, end_reasoning_id = tuple(
+        tokenizer.convert_tokens_to_ids(["<reasoning>", "</reasoning>"]) # type: ignore
+    )
     model = AutoModelForCausalLM.from_pretrained(model_name)
     model.resize_token_embeddings(len(tokenizer))
 
-    # 5. Initialize our SoftGRPOTrainer
     trainer = SoftGRPOTrainer(
         model=model,
         tokenizer=tokenizer,
-        reward_funcs=composite_reward,
+        reward_funcs=[
+            correctness_reward,
+            int_reward_func,
+            strict_format_reward,
+            soft_format_reward,
+        ],
         args=training_args,
         train_dataset=train_data,
-        temperature=1.0,  # soft sampling hyperparams
+        temperature=1.0,
         top_k=None,
         min_p=0.1,
         max_new_tokens=128,
     )
 
-    # 6. Train
     trainer.train()
 
 

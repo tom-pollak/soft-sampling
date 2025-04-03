@@ -9,6 +9,7 @@ dependencies = [
     "jaxtyping>=0.2.36",
     "torch>=2.5.1",
     "transformers[torch]>=4.48.1",
+    "trl>=0.14.0",
 ]
 
 [dependency-groups]
